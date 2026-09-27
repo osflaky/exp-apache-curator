@@ -1,0 +1,73 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: CI
+on:
+  workflow_dispatch:
+
+env:
+  MAVEN_OPTS: -Dhttp.keepAlive=false -Dmaven.wagon.http.pool=false 
+    -Dmaven.wagon.http.retryHandler.class=standard 
+    -Dmaven.wagon.http.retryHandler.count=3
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: macos-latest
+          arch: arm64
+          runner: macos-latest
+          expander_leg: macos-latest--arm64
+    name: Check [${{ matrix.expander_leg }}]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      # Keep LF line endings on Windows so header and style checks see the
+      # same file contents as on Linux and macOS.
+    - name: Disable CRLF conversion
+      run: git config --global core.autocrlf false
+    - uses: actions/checkout@v3
+    - name: Check license header
+      if: runner.os == 'Linux'
+      run: docker run --rm -v $(pwd):/github/workspace 
+        ghcr.io/korandoru/hawkeye-native:v3 check
+
+    - name: Cache Local Maven Repository
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2/repository
+        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+        restore-keys: |
+          ${{ runner.os }}-maven-
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        java-version: 21
+        distribution: 'zulu'
+      # Windows and macOS runners have no Docker to run the Linux hawkeye-native
+      # container, so run the same hawkeye checker through its Maven plugin,
+      # which reads the same licenserc.toml from the project root.
+    - name: Check license header (Windows, macOS)
+      if: runner.os != 'Linux'
+      shell: bash
+      run: ./mvnw -B -N io.korandoru.hawkeye:hawkeye-maven-plugin:check
+    - name: Check code style
+      shell: bash
+      run: ./mvnw -B spotless:check
+
+    timeout-minutes: 150
